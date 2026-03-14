@@ -7,6 +7,7 @@ import pytest
 
 from adapters.local import LocalAdapter
 from adapters.claude_code import ClaudeCodeAdapter
+from adapters.kimi import KimiAdapter
 from adapters.openclaw import OpenClawAdapter, OpenClawConfig
 from autopilot_core.task import TaskSpec
 
@@ -81,6 +82,82 @@ class TestClaudeCodeAdapter:
         assert not result.success
         assert result.exit_code == 127
         assert "not found" in result.stderr
+
+
+class TestKimiAdapter:
+    def test_name(self):
+        adapter = KimiAdapter()
+        assert adapter.name == "kimi"
+
+    def test_build_command(self):
+        adapter = KimiAdapter(max_steps=25, thinking=False)
+        task = TaskSpec.new("Test task", description="Fix the bug", task_type="bugfix")
+        cmd = adapter._build_command(task, "sess-456")
+        assert cmd[0] == "kimi"
+        assert "--print" in cmd
+        assert "-p" in cmd
+        assert "-S" in cmd
+        assert "sess-456" in cmd
+        assert "--max-steps-per-turn" in cmd
+        assert "25" in cmd
+        assert "--no-thinking" in cmd
+
+    def test_build_command_with_thinking(self):
+        adapter = KimiAdapter(thinking=True)
+        task = TaskSpec.new("Test", description="test")
+        cmd = adapter._build_command(task, "sess-789")
+        assert "--thinking" in cmd
+        assert "--no-thinking" not in cmd
+
+    def test_build_command_with_model(self):
+        adapter = KimiAdapter(model="kimi-k2.5-turbo")
+        task = TaskSpec.new("Test", description="test")
+        cmd = adapter._build_command(task, "sess-abc")
+        assert "-m" in cmd
+        assert "kimi-k2.5-turbo" in cmd
+
+    def test_build_prompt(self):
+        adapter = KimiAdapter()
+        task = TaskSpec.new(
+            "Fix auth",
+            description="Login returns 500",
+            task_type="bugfix",
+            acceptance_criteria=["Tests pass", "No regressions"],
+        )
+        prompt = adapter._build_prompt(task)
+        assert "Fix auth" in prompt
+        assert "Login returns 500" in prompt
+        assert "Tests pass" in prompt
+        assert "bugfix" in prompt
+
+    def test_extract_text_output(self):
+        adapter = KimiAdapter()
+        raw = (
+            "TurnBegin(user_input='hello')\n"
+            "StepBegin(n=1)\n"
+            "TextPart(type='text', text='hello world')\n"
+            "StatusUpdate(\n"
+            "    context_usage=0.02,\n"
+            ")\n"
+            "TurnEnd()\n"
+        )
+        text = adapter._extract_text_output(raw)
+        assert text == "hello world"
+
+    def test_execute_binary_not_found(self):
+        adapter = KimiAdapter(kimi_bin="/nonexistent/kimi")
+        task = TaskSpec.new("Test", description="test")
+        result = adapter.execute(task)
+        assert not result.success
+        assert result.exit_code == 127
+        assert "not found" in result.stderr
+
+    def test_api_key_injection(self):
+        adapter = KimiAdapter(api_key="sk-test-key")
+        assert adapter._api_key == "sk-test-key"
+
+    def test_health(self):
+        assert KimiAdapter().health() == 1.0
 
 
 class TestOpenClawAdapter:

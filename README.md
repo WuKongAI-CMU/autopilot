@@ -22,9 +22,10 @@ flowchart TB
 
     subgraph Adapters["Pluggable Adapters"]
         A1["Claude Code<br/>(claude -p)"]
-        A2["Codex<br/>(codex exec)"]
-        A3["OpenClaw<br/>(webhook)"]
-        A4["Local<br/>(shell)"]
+        A2["Kimi Code<br/>(kimi --print)"]
+        A3["Codex<br/>(codex exec)"]
+        A4["OpenClaw<br/>(webhook)"]
+        A5["Local<br/>(shell)"]
     end
 
     Q --> D
@@ -39,7 +40,8 @@ flowchart TB
 - **Capability Router** — Routes tasks to the best executor based on explicit constraints, historical performance, and health scores. Learns from outcomes.
 - **Dispatcher** — Tick-based dispatch loop with concurrency control, lease-based claiming, dependency tracking, and protected path enforcement.
 - **Event Bus** — Append-only NDJSON event bus with file locking, pub/sub channels, TTL, and tail-read optimization. Zero external dependencies.
-- **Pluggable Adapters** — Claude Code, Codex, OpenClaw, and local shell executors. Easy to add your own.
+- **Pluggable Adapters** — Claude Code, Kimi Code, Codex, OpenClaw, and local shell executors. Easy to add your own.
+- **Multi-Model Routing** — Route architectural tasks to Claude Code, volume work to Kimi Code. The router learns from outcomes.
 - **Auditable** — Every routing decision, dispatch, and execution result is recorded as an event.
 
 ## Quickstart
@@ -84,6 +86,7 @@ autopilot/
 │   ├── base.py              # Abstract base adapter
 │   ├── local.py             # Local shell executor
 │   ├── claude_code.py       # Claude Code (headless)
+│   ├── kimi.py              # Kimi Code (volume executor)
 │   └── openclaw.py          # OpenClaw webhook
 ├── plugins/                 # Extensible plugins
 ├── tests/                   # 65 tests, all passing
