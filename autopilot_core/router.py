@@ -115,18 +115,72 @@ class RoutingTable:
             return cls()
 
 
+# Default executor tiers: maps executor name to capability level
+DEFAULT_EXECUTOR_TIERS: dict[str, str] = {
+    "claude-code": "high",
+    "codex": "high",
+    "kimi": "low",
+    "local": "any",
+}
+
+# Task types that indicate high complexity
+HIGH_COMPLEXITY_TYPES = frozenset({
+    "architecture", "refactor", "security", "design",
+    "debugging", "integration", "migration",
+})
+
+# Task types that indicate low complexity
+LOW_COMPLEXITY_TYPES = frozenset({
+    "diagnostic", "cleanup", "docs", "formatting",
+    "lint", "test-only", "typo", "chore",
+})
+
+
+def classify_complexity(task: TaskSpec) -> str:
+    """Classify a task's complexity as 'high' or 'low'.
+
+    Uses task_type, priority, and description length as signals:
+    - High: architecture/refactor/security/debugging + critical/high priority
+    - Low: diagnostic/cleanup/docs/formatting + low/medium priority
+    - Ambiguous cases default based on priority (high/critical → 'high', else 'low')
+    """
+    task_type = (task.task_type or "").lower()
+    priority = task.priority
+
+    # Explicit type signals
+    if task_type in HIGH_COMPLEXITY_TYPES:
+        return "high"
+    if task_type in LOW_COMPLEXITY_TYPES:
+        return "low"
+
+    # Priority-based fallback
+    from autopilot_core.task import TaskPriority
+    if priority in (TaskPriority.CRITICAL, TaskPriority.HIGH):
+        return "high"
+
+    # Description length as a weak signal (long descriptions = complex)
+    desc_len = len(task.description or "")
+    if desc_len > 500:
+        return "high"
+
+    return "low"
+
+
 class Router:
     """Routes tasks to executors based on constraints, health, and history.
 
     Args:
         executors: List of available executor names (e.g., ["claude-code", "codex"]).
         routing_table_path: Path to persist the routing table JSON.
+        executor_tiers: Maps executor names to capability tiers ('high', 'low', 'any').
+            Defaults to claude-code=high, kimi=low, codex=high, local=any.
     """
 
     def __init__(
         self,
         executors: list[str],
         routing_table_path: str | Path | None = None,
+        executor_tiers: dict[str, str] | None = None,
     ):
         self.executors = list(executors)
         self._table_path = Path(
@@ -134,9 +188,18 @@ class Router:
             or os.environ.get("AUTOPILOT_ROUTING_TABLE", "routing-table.json")
         )
         self._table = RoutingTable.load(self._table_path)
+        self._tiers = dict(DEFAULT_EXECUTOR_TIERS)
+        if executor_tiers:
+            self._tiers.update(executor_tiers)
 
     def route(self, task: TaskSpec) -> ExecutorChoice:
-        """Select the best executor for a task."""
+        """Select the best executor for a task.
+
+        Routing layers:
+        1. Explicit constraint (task.executor is set)
+        2. Tier-based filtering (match task complexity to executor capability)
+        3. Score-based selection (historical performance)
+        """
         # Layer 1: Explicit constraint
         if task.executor and task.executor in self.executors:
             return ExecutorChoice(
@@ -147,10 +210,30 @@ class Router:
 
         # If explicit executor is set but not available, fall through to routing
         task_type = task.task_type or "general"
+        complexity = classify_complexity(task)
 
-        # Layer 2: Score-based routing
-        scores: list[tuple[str, float]] = []
+        # Layer 2: Tier-based filtering
+        # Filter executors to those matching the task complexity
+        tier_matched = []
+        tier_fallback = []
         for executor in self.executors:
+            tier = self._tiers.get(executor, "any")
+            if tier == "any" or tier == complexity:
+                tier_matched.append(executor)
+            elif complexity == "high" and tier == "low":
+                # Low-tier executors are fallback for high-complexity tasks
+                tier_fallback.append(executor)
+            else:
+                # High-tier executors can handle low-complexity tasks (fallback)
+                tier_fallback.append(executor)
+
+        candidates = tier_matched if tier_matched else tier_fallback
+        if not candidates:
+            candidates = list(self.executors)  # Last resort: all executors
+
+        # Layer 3: Score-based routing among candidates
+        scores: list[tuple[str, float]] = []
+        for executor in candidates:
             score = self._table.score(executor, task_type)
             scores.append((executor, score))
 
@@ -173,7 +256,7 @@ class Router:
         return ExecutorChoice(
             executor=best_name,
             confidence=round(confidence, 3),
-            reason=f"routed: score={best_score:.3f} margin={margin:.3f} task_type={task_type}",
+            reason=f"routed: complexity={complexity} score={best_score:.3f} margin={margin:.3f} task_type={task_type}",
         )
 
     def record_outcome(
