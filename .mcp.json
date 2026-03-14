@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "autopilot": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "cwd": "/Users/peter/autopilot",
+      "env": {
+        "AUTOPILOT_DATA_DIR": "/Users/peter/.autopilot",
+        "AUTOPILOT_EXECUTORS": "local"
+      }
+    }
+  }
+}
